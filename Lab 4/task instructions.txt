@@ -1,0 +1,14 @@
+Task 4
+Add to your framework a menu named Frequency Domain that includes the following features:
+
+1-The ability to apply discrete Fourier transform to any input signal implementing the discrete fourier transform without using the numpy fft then displays frequency versus amplitude
+(normalize amplitude to be between 0 and 1 using the implemented function of signal normalization that it was implemented before) and frequency versus phase relations after 
+asking the user to enter the sampling frequency in HZ.  
+
+2-Display the dominant frequencies (frequencies with amplitudes > 0.5).
+3-Allow modify the amplitude and phase of the signal components by selecting some index to change in 
+4-Remove DC component (remove F(0)).
+5-Allow signal reconstruction using IDFT. 
+
+
+(Hint: due to the high similarity between DFT and IDFT try to have one smart code for both ;)

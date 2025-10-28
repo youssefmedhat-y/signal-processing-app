@@ -1,0 +1,537 @@
+import numpy as np
+
+
+class Signal:
+    def __init__(self):
+        self.N1 = 0
+        self.samples = {}
+        self.is_periodic = False  # Flag to indicate if signal is periodic
+
+
+def write_signal_file(signal_object, file_name, is_periodic=False):
+    """
+    Write signal to file
+    For time domain signals: writes index and amplitude
+    For frequency domain signals: writes amplitude and phase
+    """
+    with open(file_name, 'w') as f:
+        # Determine if this is a frequency domain signal
+        is_frequency_domain = hasattr(signal_object, 'frequencies')
+        
+        # 1. Write SignalType
+        f.write(f"{1 if is_frequency_domain else 0}\n")  # 1 for Frequency, 0 for Time
+        
+        # 2. Write IsPeriodic
+        f.write(f"{1 if is_periodic else 0}\n")  # 1 for periodic, 0 for non-periodic
+        
+        # 3. Write Number of Samples
+        f.write(f"{len(signal_object.samples)}\n")
+
+        # 4. Write Samples
+        if is_frequency_domain:
+            # For frequency domain: write amplitude and phase (without index)
+            for key in sorted(signal_object.samples.keys()):
+                amplitude = signal_object.amplitudes[key]
+                phase = signal_object.phase_shifts[key]
+                f.write(f"{amplitude} {phase}\n")
+        else:
+            # For time domain: write index and amplitude
+            for key in sorted(signal_object.samples.keys()):
+                data = signal_object.samples[key]
+                f.write(f"{key} {data[0]}\n")
+
+    print(f"Save successful to {file_name}")
+    return True
+
+
+def load_signal_file(file_name):
+    """
+    Reads a signal from a file with the format:
+    [SignalType] // Time-->0/Freq-->1
+    [IsPeriodic] // takes 0 or 1
+    [N1] // number of samples to follow
+    
+    For time domain (SignalType=0):
+        Index SampleAmp
+        i0 amp0
+        i1 amp1
+        ...
+    
+    For frequency domain (SignalType=1):
+        Amplitude Phase
+        amp0 phase0
+        amp1 phase1
+        ...
+    """
+    signal_object = Signal()
+    signal_object.samples = {}  # Initialize samples dictionary
+
+    try:
+        with open(file_name, 'r') as f:
+            # 1. Read Signal Type (0=Time, 1=Frequency)
+            try:
+                signal_type_line = f.readline().strip()
+                signal_type = int(signal_type_line)  # 0 for Time, 1 for Frequency
+                is_frequency_domain = (signal_type == 1)
+            except ValueError:
+                print(f"Error reading signal type in file: {file_name}")
+                return None
+                
+            # 2. Read IsPeriodic flag (0=Non-periodic, 1=Periodic)
+            try:
+                is_periodic_line = f.readline().strip()
+                is_periodic = int(is_periodic_line) == 1
+                signal_object.is_periodic = is_periodic
+            except ValueError:
+                print(f"Error reading periodic flag in file: {file_name}, assuming non-periodic")
+                signal_object.is_periodic = False
+
+            # 3. Read Number of Samples (N1)
+            try:
+                num_samples_line = f.readline().strip()
+                signal_object.N1 = int(num_samples_line)
+            except ValueError:
+                print(f"Error reading number of samples in file: {file_name}")
+                return None
+
+            # 4. Read Samples
+            if is_frequency_domain:
+                # For frequency domain: read amplitude and phase pairs
+                amplitudes = []
+                phase_shifts = []
+                index = 0
+                
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) == 2:
+                        try:
+                            amplitude = float(parts[0])
+                            phase = float(parts[1])
+                            amplitudes.append(amplitude)
+                            phase_shifts.append(phase)
+                            # Store in samples dict as [amplitude, phase]
+                            signal_object.samples[index] = [amplitude, phase]
+                            index += 1
+                        except ValueError:
+                            print(f"Skipping malformed line in {file_name}: {line.strip()}")
+                            continue
+                    elif parts:
+                        print(f"Skipping unexpected line format in {file_name}: {line.strip()}")
+                        continue
+                
+                # Store frequency domain metadata
+                signal_object.amplitudes = np.array(amplitudes)
+                signal_object.phase_shifts = np.array(phase_shifts)
+                
+                # Calculate normalized amplitudes
+                max_amp = np.max(signal_object.amplitudes) if len(amplitudes) > 0 else 1.0
+                if max_amp > 0:
+                    signal_object.normalized_amplitudes = signal_object.amplitudes / max_amp
+                else:
+                    signal_object.normalized_amplitudes = signal_object.amplitudes.copy()
+                
+                # We don't know sampling frequency from file, set to 1.0 as default
+                signal_object.sampling_frequency = 1.0
+                signal_object.frequencies = np.array([k * signal_object.sampling_frequency / len(amplitudes) 
+                                                     for k in range(len(amplitudes))])
+                
+            else:
+                # For time domain: read index and amplitude pairs
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) == 2:
+                        try:
+                            index = int(parts[0])
+                            amplitude = float(parts[1])
+                            # The samples dict stores {index: [amplitude]}
+                            signal_object.samples[index] = [amplitude]
+                        except ValueError:
+                            print(f"Skipping malformed line in {file_name}: {line.strip()}")
+                            continue
+                    elif parts:  # Log non-empty lines that don't split into 2 parts
+                        print(f"Skipping unexpected line format in {file_name}: {line.strip()}")
+                        continue
+
+            # Recalculate N1 based on actual loaded samples in case file N1 was incorrect
+            if signal_object.N1 != len(signal_object.samples):
+                print(
+                    f"Warning: File header N1 ({signal_object.N1}) does not match actual samples loaded ({len(signal_object.samples)}). Using loaded count.")
+                signal_object.N1 = len(signal_object.samples)
+
+        print(f"Load successful from {file_name}")
+        if is_frequency_domain:
+            print(f"  Loaded as frequency domain signal with {signal_object.N1} components")
+        return signal_object
+
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_name}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while loading {file_name}: {e}")
+        return None
+
+
+def _perform_two_signal_op(signal1, signal2, operation):
+    result_signal = Signal()
+
+    all_keys = set(signal1.samples.keys()) | set(signal2.samples.keys())
+
+    for key in all_keys:
+        amp1 = signal1.samples.get(key, [0.0])[0]
+        amp2 = signal2.samples.get(key, [0.0])[0]
+
+        if operation == 'add':
+            result_amp = amp1 + amp2
+        elif operation == 'subtract':
+            result_amp = amp1 - amp2
+
+        result_signal.samples[key] = [result_amp]
+
+    result_signal.N1 = len(result_signal.samples)
+    return result_signal
+
+
+def add_signals(signal1, signal2):
+    return _perform_two_signal_op(signal1, signal2, 'add')
+
+
+def subtract_signals(signal1, signal2):
+    return _perform_two_signal_op(signal1, signal2, 'subtract')
+
+
+def multiply_signal(signal, constant):
+    result_signal = Signal()
+
+    for key, data in signal.samples.items():
+        original_amp = data[0]
+        result_amp = original_amp * constant
+        result_signal.samples[key] = [result_amp]
+
+    result_signal.N1 = len(result_signal.samples)
+    return result_signal
+
+
+def square_signal(signal):
+    result_signal = Signal()
+
+    for key, data in signal.samples.items():
+        original_amp = data[0]
+        result_amp = original_amp ** 2
+        result_signal.samples[key] = [result_amp]
+
+    result_signal.N1 = len(result_signal.samples)
+    return result_signal
+
+
+def accumulate_signal(signal):
+    result_signal = Signal()
+
+    sorted_indices = sorted(signal.samples.keys())
+    running_sum = 0.0
+
+    for index in sorted_indices:
+        current_amp = signal.samples[index][0]
+        running_sum += current_amp
+        result_signal.samples[index] = [running_sum]
+
+    result_signal.N1 = len(result_signal.samples)
+    return result_signal
+
+
+def normalize_signal(signal, target_range):
+    samples = np.array([data[0] for data in signal.samples.values()])
+    if len(samples) == 0:
+        return signal
+
+    min_val = np.min(samples)
+    max_val = np.max(samples)
+
+    range_val = max_val - min_val
+    # Avoid division by zero for constant signals
+    if range_val == 0:
+        if target_range == '-1_to_1':
+            normalized_samples = np.ones_like(samples) * (1 if min_val >= 0 else -1)
+        elif target_range == '0_to_1':
+            normalized_samples = np.ones_like(samples) * (1 if min_val >= 0 else 0)
+    else:
+        scaled_samples = (samples - min_val) / range_val
+
+        if target_range == '-1_to_1':
+            normalized_samples = 2 * scaled_samples - 1
+        elif target_range == '0_to_1':
+            normalized_samples = scaled_samples
+
+    result_signal = Signal()
+    result_signal.N1 = signal.N1
+
+    sorted_keys = sorted(signal.samples.keys())
+    # Ensure correct mapping back to indices
+    # We must use the sorted order of keys to match the sorted order of 'samples' used to create 'normalized_samples'
+    for i, key in enumerate(sorted_keys):
+        result_signal.samples[key] = [normalized_samples[i]]
+
+    return result_signal
+
+
+def compare_signal(signal1, signal2):
+    # This implementation is likely a placeholder from the original code.
+    # A proper comparison would check all samples.
+    if (signal1 == signal2):
+        print(1);
+    else:
+        print(2);
+
+
+def generate_sin_cos(w_type, A, theta, F, Fs, duration=1.0, is_periodic=True):
+    if Fs < 2 * F:
+        print(f"WARNING: Nyquist criterion violated (Fs < 2F). Aliasing will occur. Fs={Fs}, 2F={2 * F}")
+        return (0)
+
+    N = int(Fs * duration)
+    n_indices = np.arange(N)
+
+    # y[n] = A * sin/cos(2*pi * (F/Fs) * n + theta)
+    discrete_frequency = (2 * np.pi * F) / Fs
+
+    if w_type == 'sine':
+        samples_array = A * np.sin(discrete_frequency * n_indices + theta)
+    elif w_type == 'cosine':
+        samples_array = A * np.cos(discrete_frequency * n_indices + theta)
+
+    result_signal = Signal()
+    result_signal.N1 = N
+    result_signal.samples = {n: [samples_array[n]] for n in n_indices}
+    result_signal.is_periodic = is_periodic  # Set the periodic flag based on the parameter
+
+    return result_signal
+
+
+def quantize_signal_bits(signal, num_bits):
+    """
+    Quantize a signal based on number of bits
+    
+    Args:
+        signal: Signal object
+        num_bits: Number of bits for quantization
+    
+    Returns:
+        tuple: (encoded_values, quantized_values)
+    """
+    # Calculate number of levels from bits
+    num_levels = 2 ** num_bits
+    
+    # Extract signal values and find min/max
+    samples = np.array([data[0] for data in signal.samples.values()])
+    min_val = np.min(samples)
+    max_val = np.max(samples)
+    
+    # Calculate step size (Delta)
+    delta = (max_val - min_val) / num_levels
+    
+    # Initialize result arrays
+    encoded_values = []
+    quantized_values = []
+    
+    # Sort indices to ensure proper ordering
+    sorted_indices = sorted(signal.samples.keys())
+    
+    for index in sorted_indices:
+        sample_val = signal.samples[index][0]
+        
+        # Calculate the level for this sample
+        level = int((sample_val - min_val) / delta)
+        
+        # Handle edge case for max value
+        if level == num_levels:
+            level = num_levels - 1
+            
+        # Calculate quantized value (midpoint of the level)
+        quantized_val = min_val + delta * (level + 0.5)
+        
+        # Generate binary code for the level
+        # Convert to binary and remove '0b' prefix, then pad with zeros
+        binary_code = bin(level)[2:].zfill(num_bits)
+        
+        # Store results
+        encoded_values.append(binary_code)
+        quantized_values.append(quantized_val)
+    
+    return encoded_values, quantized_values
+
+
+def quantize_signal_levels(signal, num_levels):
+    """
+    Quantize a signal based on number of levels
+    
+    Args:
+        signal: Signal object
+        num_levels: Number of levels for quantization
+    
+    Returns:
+        tuple: (interval_indices, encoded_values, quantized_values, sampled_errors)
+    """
+    # Calculate number of bits from levels
+    num_bits = int(np.ceil(np.log2(num_levels)))
+    
+    # Extract signal values and find min/max
+    samples = np.array([data[0] for data in signal.samples.values()])
+    min_val = np.min(samples)
+    max_val = np.max(samples)
+    
+    # Calculate step size (Delta)
+    delta = (max_val - min_val) / num_levels
+    
+    # Initialize result arrays
+    interval_indices = []
+    encoded_values = []
+    quantized_values = []
+    sampled_errors = []
+    
+    # Sort indices to ensure proper ordering
+    sorted_indices = sorted(signal.samples.keys())
+    
+    for index in sorted_indices:
+        sample_val = signal.samples[index][0]
+        
+        # Calculate the interval index for this sample
+        interval_idx = int((sample_val - min_val) / delta)
+        
+        # Handle edge case for max value
+        if interval_idx == num_levels:
+            interval_idx = num_levels - 1
+            
+        # Calculate quantized value (midpoint of the interval)
+        quantized_val = min_val + delta * (interval_idx + 0.5)
+        
+        # Calculate the error
+        error = quantized_val - sample_val
+        
+        # Generate binary code for the interval index
+        # Convert to binary and remove '0b' prefix, then pad with zeros
+        binary_code = bin(interval_idx)[2:].zfill(num_bits)
+        
+        # Store results
+        interval_indices.append(interval_idx+1)
+        encoded_values.append(binary_code)
+        quantized_values.append(quantized_val)
+        sampled_errors.append(error)
+    
+    return interval_indices, encoded_values, quantized_values, sampled_errors
+
+
+def dft(signal, sampling_frequency):
+    """
+    Compute the Discrete Fourier Transform (DFT) of a signal
+    
+    Args:
+        signal: Signal object (time domain)
+        sampling_frequency: Sampling frequency in Hz
+    
+    Returns:
+        tuple: (frequencies, amplitudes, phase_shifts)
+            frequencies: array of frequency values
+            amplitudes: array of amplitude values
+            phase_shifts: array of phase shift values in radians
+    """
+    # Get signal samples in order
+    sorted_indices = sorted(signal.samples.keys())
+    N = len(sorted_indices)
+    
+    # Extract time domain samples
+    x = np.array([signal.samples[i][0] for i in sorted_indices])
+    
+    # Initialize arrays for frequency domain
+    amplitudes = np.zeros(N)
+    phase_shifts = np.zeros(N)
+    
+    # Compute DFT manually (without using numpy.fft)
+    for k in range(N):
+        # Initialize real and imaginary parts
+        real_part = 0.0
+        imag_part = 0.0
+        
+        # Sum over all time samples
+        for n in range(N):
+            angle = -2 * np.pi * k * n / N
+            real_part += x[n] * np.cos(angle)
+            imag_part += x[n] * np.sin(angle)
+        
+        # Compute amplitude (magnitude)
+        amplitudes[k] = np.sqrt(real_part**2 + imag_part**2)
+        
+        # Compute phase shift
+        phase_shifts[k] = np.arctan2(imag_part, real_part)
+    
+    # Generate frequency values
+    # Frequency resolution: Fs / N
+    fundamental_frequency = sampling_frequency / N
+    frequencies = np.array([k * fundamental_frequency for k in range(N)])
+    
+    return frequencies, amplitudes, phase_shifts
+
+
+def idft(frequencies, amplitudes, phase_shifts):
+    """
+    Compute the Inverse Discrete Fourier Transform (IDFT)
+    
+    Args:
+        frequencies: array of frequency values
+        amplitudes: array of amplitude values
+        phase_shifts: array of phase shift values in radians
+    
+    Returns:
+        Signal object in time domain
+    """
+    N = len(amplitudes)
+    
+    # Initialize time domain signal array
+    x = np.zeros(N)
+    
+    # Compute IDFT manually (without using numpy.ifft)
+    for n in range(N):
+        # Initialize real and imaginary parts
+        real_part = 0.0
+        imag_part = 0.0
+        
+        # Sum over all frequency components
+        for k in range(N):
+            # Convert amplitude and phase to real and imaginary
+            real_freq = amplitudes[k] * np.cos(phase_shifts[k])
+            imag_freq = amplitudes[k] * np.sin(phase_shifts[k])
+            
+            angle = 2 * np.pi * k * n / N
+            real_part += real_freq * np.cos(angle) - imag_freq * np.sin(angle)
+            imag_part += real_freq * np.sin(angle) + imag_freq * np.cos(angle)
+        
+        # Take only the real part and divide by N
+        x[n] = real_part / N
+    
+    # Create Signal object
+    result_signal = Signal()
+    result_signal.N1 = N
+    result_signal.samples = {i: [x[i]] for i in range(N)}
+    result_signal.is_periodic = False
+    
+    return result_signal
+
+
+def remove_dc_component(amplitudes, phase_shifts):
+    """
+    Remove the DC component (zero frequency component) from frequency domain signal
+    
+    Args:
+        amplitudes: array of amplitude values
+        phase_shifts: array of phase shift values
+    
+    Returns:
+        tuple: (modified_amplitudes, modified_phase_shifts) with DC removed
+    """
+    # Copy arrays to avoid modifying originals
+    modified_amplitudes = amplitudes.copy()
+    modified_phase_shifts = phase_shifts.copy()
+    
+    # Set the DC component (first element) to zero
+    modified_amplitudes[0] = 0.0
+    modified_phase_shifts[0] = 0.0
+    
+    return modified_amplitudes, modified_phase_shifts
