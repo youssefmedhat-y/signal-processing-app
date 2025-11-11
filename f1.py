@@ -3,7 +3,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import os
 from signal_processor import Signal, write_signal_file, add_signals, subtract_signals, multiply_signal, square_signal, \
     accumulate_signal, normalize_signal, generate_sin_cos, load_signal_file, quantize_signal_bits, quantize_signal_levels, \
-    dft, idft, remove_dc_component
+    dft, idft, remove_dc_component, fft_ifft
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -204,11 +204,13 @@ class SignalProcessorGUI(tk.Tk):
         freq_section.pack(fill=tk.X, padx=10, pady=10)
 
         freq_operations = [
-            ("🌊 Apply DFT", self.perform_dft),
+            ("🌊 Apply DFT (Slow)", self.perform_dft),
+            ("⚡ Apply FFT (Fast)", self.perform_fft),
             ("📊 Show Dominant Frequencies", self.show_dominant_frequencies),
             ("✏️ Modify Component", self.modify_frequency_component),
             ("🚫 Remove DC Component", self.perform_remove_dc),
-            ("↩️ Apply IDFT", self.perform_idft)
+            ("↩️ Apply IDFT (Slow)", self.perform_idft),
+            ("⚡ Apply IFFT (Fast)", self.perform_ifft)
         ]
 
         for text, cmd in freq_operations:
@@ -1417,6 +1419,81 @@ class SignalProcessorGUI(tk.Tk):
         
         # Visualize frequency domain
         self.show_frequency_domain_plot(frequencies, normalized_amplitudes, phase_shifts, f"DFT of {name}")
+    
+    def perform_fft(self):
+        """Apply Fast Fourier Transform to a signal"""
+        name, sig = self.select_signal("Select signal for FFT:")
+        if not sig:
+            return
+        
+        # Ask for sampling frequency
+        sampling_freq = simpledialog.askfloat(
+            "FFT Parameters",
+            "Enter the sampling frequency (Hz):",
+            minvalue=0.1
+        )
+        if not sampling_freq:
+            return
+        
+        self.write_to_console(f"Computing FFT for '{name}' with Fs = {sampling_freq} Hz...")
+        
+        # Compute FFT using the fast algorithm
+        frequencies, amplitudes, phase_shifts = fft_ifft(sig, sampling_freq, is_inverse=False)
+        
+        # Normalize amplitudes to [0, 1]
+        max_amp = np.max(amplitudes)
+        if max_amp > 0:
+            normalized_amplitudes = amplitudes / max_amp
+        else:
+            normalized_amplitudes = amplitudes
+        
+        # Store frequency domain data as a new signal
+        freq_signal = Signal()
+        freq_signal.N1 = len(frequencies)
+        freq_signal.samples = {}
+        
+        # Store frequency domain data with index as key
+        for i in range(len(frequencies)):
+            # Store as [amplitude, phase] for frequency domain signals
+            freq_signal.samples[i] = [amplitudes[i], phase_shifts[i]]
+        
+        # Mark this as a frequency domain signal
+        freq_signal.is_periodic = False
+        
+        # Store additional metadata
+        freq_signal.frequencies = frequencies
+        freq_signal.amplitudes = amplitudes
+        freq_signal.phase_shifts = phase_shifts
+        freq_signal.normalized_amplitudes = normalized_amplitudes
+        freq_signal.sampling_frequency = sampling_freq
+        
+        # Register the frequency domain signal
+        freq_name = f"{name}_FFT"
+        self.register_signal(freq_name, freq_signal)
+        
+        # Display results
+        self.write_to_console(f"\nFFT Results for '{name}':")
+        self.write_to_console(f"{'Index':<8}{'Freq (Hz)':<15}{'Amplitude':<15}{'Norm. Amp':<15}{'Phase (rad)':<15}")
+        self.write_to_console("-" * 70)
+        
+        for i in range(len(frequencies)):
+            self.write_to_console(
+                f"{i:<8}{frequencies[i]:<15.3f}{amplitudes[i]:<15.3f}{normalized_amplitudes[i]:<15.3f}{phase_shifts[i]:<15.3f}"
+            )
+        
+        # Ask if user wants to save FFT results to file
+        if messagebox.askyesno("Save FFT Results", "Would you like to save the FFT results to a file?"):
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                title="Save FFT Results"
+            )
+            if filepath:
+                write_signal_file(freq_signal, filepath, is_periodic=False)
+                self.write_to_console(f"FFT results saved to {filepath}")
+        
+        # Visualize frequency domain
+        self.show_frequency_domain_plot(frequencies, normalized_amplitudes, phase_shifts, f"FFT of {name}")
         
     def show_frequency_domain_plot(self, frequencies, amplitudes, phase_shifts, title):
         """Display frequency domain plots (amplitude and phase vs frequency)"""
@@ -1744,6 +1821,42 @@ class SignalProcessorGUI(tk.Tk):
         
         # Display reconstructed signal
         self.show_signal_visualization(time_signal, f"IDFT: {time_name}")
+    
+    def perform_ifft(self):
+        """Apply Inverse Fast Fourier Transform"""
+        name, sig = self.select_signal("Select FFT/DFT signal for IFFT:")
+        if not sig:
+            return
+        
+        # Check if this is a frequency domain signal
+        if not hasattr(sig, 'frequencies'):
+            messagebox.showerror("Error", "Please select a signal that has been transformed with FFT or DFT.")
+            return
+        
+        self.write_to_console(f"Computing IFFT for '{name}'...")
+        
+        # Compute IFFT using the fast algorithm
+        time_signal = fft_ifft((sig.amplitudes, sig.phase_shifts), sig.sampling_frequency, is_inverse=True)
+        
+        # Register reconstructed time domain signal
+        time_name = f"{name}_IFFT"
+        self.register_signal(time_name, time_signal)
+        
+        self.write_to_console(f"IFFT completed. Signal '{time_name}' has been reconstructed.")
+        
+        # Ask if user wants to save IFFT results to file
+        if messagebox.askyesno("Save IFFT Results", "Would you like to save the reconstructed signal to a file?"):
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                title="Save IFFT Results"
+            )
+            if filepath:
+                write_signal_file(time_signal, filepath, is_periodic=False)
+                self.write_to_console(f"IFFT results saved to {filepath}")
+        
+        # Display reconstructed signal
+        self.show_signal_visualization(time_signal, f"IFFT: {time_name}")
 
 
 

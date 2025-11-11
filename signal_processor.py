@@ -419,9 +419,145 @@ def quantize_signal_levels(signal, num_levels):
     return interval_indices, encoded_values, quantized_values, sampled_errors
 
 
+def _fft_recursive(x, is_inverse=False):
+    """
+    Recursive FFT implementation using Decimation-in-Time (Cooley-Tukey algorithm)
+    Follows the butterfly operation structure
+    Handles both FFT and IFFT with conditional logic
+    
+    Args:
+        x: Input array (complex numbers)
+        is_inverse: If True, compute IFFT; if False, compute FFT
+    
+    Returns:
+        Complex array of FFT/IFFT coefficients
+    """
+    N = len(x)
+    
+    # Base case: if N = 1, return the input
+    if N == 1:
+        return x
+    
+    # Base case: if N = 2, direct computation
+    if N == 2:
+        # Butterfly operation for N=2
+        # return List {x[0]+x[1], x[0]-x[1]}
+        return np.array([x[0] + x[1], x[0] - x[1]])
+    
+    # Check if N is a power of 2
+    if N & (N - 1) != 0:
+        # Pad with zeros to next power of 2
+        next_pow2 = 2 ** int(np.ceil(np.log2(N)))
+        x = np.pad(x, (0, next_pow2 - N), 'constant')
+        N = next_pow2
+    
+    # Divide: L1 = samples with even indices, L2 = samples with odd indices
+    L1 = x[0::2]  # Even indices
+    L2 = x[1::2]  # Odd indices
+    
+    # Recursive calls
+    fft_1 = _fft_recursive(L1, is_inverse)  # FFT of even samples
+    fft_2 = _fft_recursive(L2, is_inverse)  # FFT of odd samples
+    
+    # Initialize result array
+    result = np.zeros(N, dtype=complex)
+    
+    # Twiddle factor sign: -1 for FFT, +1 for IFFT
+    sign = 1 if is_inverse else -1
+    
+    # Loop from k = 0 to N/2 - 1
+    for k in range(N // 2):
+        # W = exp(−j2πk/N) for FFT, exp(+j2πk/N) for IFFT
+        W = np.exp(sign * 2j * np.pi * k / N)
+        
+        # Butterfly operations
+        # butterflyTop: fft_1[k] + W * fft_2[k]
+        # butterflyDown: fft_1[k] - W * fft_2[k]
+        result[k] = fft_1[k] + W * fft_2[k]           # Top butterfly
+        result[k + N // 2] = fft_1[k] - W * fft_2[k]  # Bottom butterfly
+    
+    return result
+
+
+def fft_ifft(x, sampling_frequency=1.0, is_inverse=False):
+    """
+    Unified FFT/IFFT function using Decimation-in-Time algorithm
+    
+    Args:
+        x: Input signal (numpy array or Signal object for FFT, 
+           or tuple of (amplitudes, phase_shifts) for IFFT)
+        sampling_frequency: Sampling frequency in Hz (for FFT)
+        is_inverse: If True, compute IFFT; if False, compute FFT
+    
+    Returns:
+        For FFT: tuple (frequencies, amplitudes, phase_shifts)
+        For IFFT: Signal object in time domain
+    """
+    if not is_inverse:
+        # FFT Mode
+        # Handle Signal object input
+        if isinstance(x, Signal):
+            sorted_indices = sorted(x.samples.keys())
+            x_array = np.array([x.samples[i][0] for i in sorted_indices])
+        else:
+            x_array = np.array(x)
+        
+        N = len(x_array)
+        
+        # Apply FFT
+        X = _fft_recursive(x_array.astype(complex), is_inverse=False)
+        
+        # Trim to original size if padding was applied
+        X = X[:N]
+        
+        # Extract amplitude and phase
+        amplitudes = np.abs(X)
+        phase_shifts = np.angle(X)
+        
+        # Generate frequency values
+        fundamental_frequency = sampling_frequency / N
+        frequencies = np.array([k * fundamental_frequency for k in range(N)])
+        
+        return frequencies, amplitudes, phase_shifts
+    
+    else:
+        # IFFT Mode
+        # Handle tuple input (amplitudes, phase_shifts)
+        if isinstance(x, tuple):
+            amplitudes, phase_shifts = x
+        else:
+            # Assume x is already complex array
+            amplitudes = np.abs(x)
+            phase_shifts = np.angle(x)
+        
+        N = len(amplitudes)
+        
+        # Convert polar form to complex form
+        X = amplitudes * np.exp(1j * phase_shifts)
+        
+        # Apply IFFT
+        x_reconstructed = _fft_recursive(X, is_inverse=True)
+        
+        # Normalize by N for IFFT
+        x_reconstructed = x_reconstructed / N
+        
+        # Take real part (imaginary part should be negligible)
+        x_real = np.real(x_reconstructed)
+        
+        # Create Signal object
+        result_signal = Signal()
+        result_signal.N1 = N
+        result_signal.samples = {i: [x_real[i]] for i in range(N)}
+        result_signal.is_periodic = False
+        
+        return result_signal
+
+
+# Legacy function names for backward compatibility
 def dft(signal, sampling_frequency):
     """
-    Compute the Discrete Fourier Transform (DFT) of a signal
+    Compute the Discrete Fourier Transform using FFT
+    (Wrapper for backward compatibility)
     
     Args:
         signal: Signal object (time domain)
@@ -429,50 +565,14 @@ def dft(signal, sampling_frequency):
     
     Returns:
         tuple: (frequencies, amplitudes, phase_shifts)
-            frequencies: array of frequency values
-            amplitudes: array of amplitude values
-            phase_shifts: array of phase shift values in radians
     """
-    # Get signal samples in order
-    sorted_indices = sorted(signal.samples.keys())
-    N = len(sorted_indices)
-    
-    # Extract time domain samples
-    x = np.array([signal.samples[i][0] for i in sorted_indices])
-    
-    # Initialize arrays for frequency domain
-    amplitudes = np.zeros(N)
-    phase_shifts = np.zeros(N)
-    
-    # Compute DFT manually (without using numpy.fft)
-    for k in range(N):
-        # Initialize real and imaginary parts
-        real_part = 0.0
-        imag_part = 0.0
-        
-        # Sum over all time samples
-        for n in range(N):
-            angle = -2 * np.pi * k * n / N
-            real_part += x[n] * np.cos(angle)
-            imag_part += x[n] * np.sin(angle)
-        
-        # Compute amplitude (magnitude)
-        amplitudes[k] = np.sqrt(real_part**2 + imag_part**2)
-        
-        # Compute phase shift
-        phase_shifts[k] = np.arctan2(imag_part, real_part)
-    
-    # Generate frequency values
-    # Frequency resolution: Fs / N
-    fundamental_frequency = sampling_frequency / N
-    frequencies = np.array([k * fundamental_frequency for k in range(N)])
-    
-    return frequencies, amplitudes, phase_shifts
+    return fft_ifft(signal, sampling_frequency, is_inverse=False)
 
 
 def idft(frequencies, amplitudes, phase_shifts):
     """
-    Compute the Inverse Discrete Fourier Transform (IDFT)
+    Compute the Inverse Discrete Fourier Transform using IFFT
+    (Wrapper for backward compatibility)
     
     Args:
         frequencies: array of frequency values
@@ -482,37 +582,7 @@ def idft(frequencies, amplitudes, phase_shifts):
     Returns:
         Signal object in time domain
     """
-    N = len(amplitudes)
-    
-    # Initialize time domain signal array
-    x = np.zeros(N)
-    
-    # Compute IDFT manually (without using numpy.ifft)
-    for n in range(N):
-        # Initialize real and imaginary parts
-        real_part = 0.0
-        imag_part = 0.0
-        
-        # Sum over all frequency components
-        for k in range(N):
-            # Convert amplitude and phase to real and imaginary
-            real_freq = amplitudes[k] * np.cos(phase_shifts[k])
-            imag_freq = amplitudes[k] * np.sin(phase_shifts[k])
-            
-            angle = 2 * np.pi * k * n / N
-            real_part += real_freq * np.cos(angle) - imag_freq * np.sin(angle)
-            imag_part += real_freq * np.sin(angle) + imag_freq * np.cos(angle)
-        
-        # Take only the real part and divide by N
-        x[n] = real_part / N
-    
-    # Create Signal object
-    result_signal = Signal()
-    result_signal.N1 = N
-    result_signal.samples = {i: [x[i]] for i in range(N)}
-    result_signal.is_periodic = False
-    
-    return result_signal
+    return fft_ifft((amplitudes, phase_shifts), sampling_frequency=1.0, is_inverse=True)
 
 
 def remove_dc_component(amplitudes, phase_shifts):
