@@ -812,34 +812,44 @@ def remove_dc_time_domain(signal):
 
 def convolve_signals(signal1, signal2):
     """
-    Convolve two signals manually (no numpy.convolve)
-    
-    Args:
-        signal1: First Signal object
-        signal2: Second Signal object
-    
-    Returns:
-        Signal object containing convolution result
+    Convolve two signals using the standard mathematical formula:
+    y[n] = sum(x[k] * h[n-k])
     """
-    # Get sorted indices and samples
+    # 1. Get sorted indices and samples just like before
     indices1 = sorted(signal1.samples.keys())
     samples1 = [signal1.samples[i][0] for i in indices1]
     
     indices2 = sorted(signal2.samples.keys())
     samples2 = [signal2.samples[i][0] for i in indices2]
     
-    # Convolution output length
-    output_length = len(samples1) + len(samples2) - 1
+    len1 = len(samples1)
+    len2 = len(samples2)
     
-    # Initialize output
-    conv_result = [0.0] * output_length
+    # 2. Determine Output Length
+    output_length = len1 + len2 - 1
     
-    # Perform convolution: y[n] = sum(x[k] * h[n-k])
-    for i in range(len(samples1)):
-        for j in range(len(samples2)):
-            conv_result[i + j] += samples1[i] * samples2[j]
+    # Initialize output list
+    conv_result = []
     
-    # Calculate output indices
+    # 3. THE NORMAL METHOD (Output-Side Algorithm)
+    # We iterate through every point 'n' in the result signal first
+    for n in range(output_length):
+        
+        # Accumulator for this specific point y[n]
+        current_sum = 0.0
+        
+        # Inner loop: Iterate through 'k' (Variable for Signal 1)
+        # We try to multiply samples1[k] * samples2[n-k]
+        for k in range(len1):
+            
+            # 4. Check Bounds for Signal 2
+            # We need the index (n-k) to be valid for Signal 2
+            if 0 <= n - k < len2:
+                current_sum += samples1[k] * samples2[n - k]
+        
+        conv_result.append(current_sum)
+    
+    # 5. Calculate output indices (Same as before)
     min_index = indices1[0] + indices2[0]
     output_indices = [min_index + i for i in range(output_length)]
     
