@@ -1,0 +1,19 @@
+Task 6
+Add to your framework a menu named Time Domain that includes the following features:
+1) Smoothing: Compute moving average y(n) for signal x(n) let the user enter the number of points included in averaging. (convolution)
+2) Sharpening: Compute and display y (n) which represents
+First Derivative of input signal  
+Y(n) = x(n)-x(n-1)
+Second derivative of input signal 
+Y(n)= x(n+1)-2x(n)+x(n-1)    
+3) Delaying or advancing a signal by k steps. 
+4) Folding a signal. 
+5) Delaying or advancing a folded signal. 
+6) Remove the DC component in time domain.  Using mean
+7) The ability to convolve two signals.  
+8) The ability to compute normalized cross-correlation of two signals or normalized autocorrelation of a signal.
+9) The ability to compute the normalized cross-correlation of periodic signals (not necessarily of same length).
+10) Time Analysis: perform time delay analysis, given two periodic signals and the sampling period, find approximately the delay between them.
+
+
+

@@ -605,3 +605,396 @@ def remove_dc_component(amplitudes, phase_shifts):
     modified_phase_shifts[0] = 0.0
     
     return modified_amplitudes, modified_phase_shifts
+
+
+# ============================================================================
+# TIME DOMAIN OPERATIONS (Task 6)
+# ============================================================================
+
+def moving_average(signal, window_size):
+    """
+    Compute moving average (smoothing) using convolution
+    
+    Args:
+        signal: Signal object
+        window_size: Number of points to average
+    
+    Returns:
+        Signal object with smoothed values
+    """
+    sorted_indices = sorted(signal.samples.keys())
+    samples = [signal.samples[i][0] for i in sorted_indices]
+    
+    # Create moving average filter (all ones divided by window size)
+    filter_values = [1.0 / window_size] * window_size
+    
+    # Apply convolution for smoothing
+    smoothed = []
+    n = len(samples)
+    
+    for i in range(n):
+        avg_sum = 0.0
+        count = 0
+        for j in range(window_size):
+            idx = i - j
+            if 0 <= idx < n:
+                avg_sum += samples[idx]
+                count += 1
+        smoothed.append(avg_sum / count if count > 0 else samples[i])
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = len(smoothed)
+    result_signal.samples = {sorted_indices[i]: [smoothed[i]] for i in range(len(smoothed))}
+    result_signal.is_periodic = signal.is_periodic if hasattr(signal, 'is_periodic') else False
+    
+    return result_signal
+
+
+def first_derivative(signal):
+    """
+    Compute first derivative: Y(n) = x(n) - x(n-1)
+    
+    Args:
+        signal: Signal object
+    
+    Returns:
+        Signal object with first derivative
+    """
+    sorted_indices = sorted(signal.samples.keys())
+    samples = [signal.samples[i][0] for i in sorted_indices]
+    
+    # Compute first derivative
+    derivative = []
+    for i in range(len(samples)):
+        if i == 0:
+            # For first sample, use forward difference
+            derivative.append(samples[i])
+        else:
+            derivative.append(samples[i] - samples[i-1])
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = len(derivative)
+    result_signal.samples = {sorted_indices[i]: [derivative[i]] for i in range(len(derivative))}
+    result_signal.is_periodic = False
+    
+    return result_signal
+
+
+def second_derivative(signal):
+    """
+    Compute second derivative: Y(n) = x(n+1) - 2*x(n) + x(n-1)
+    
+    Args:
+        signal: Signal object
+    
+    Returns:
+        Signal object with second derivative
+    """
+    sorted_indices = sorted(signal.samples.keys())
+    samples = [signal.samples[i][0] for i in sorted_indices]
+    
+    # Compute second derivative
+    derivative = []
+    for i in range(len(samples)):
+        if i == 0:
+            # For first sample
+            if len(samples) > 1:
+                derivative.append(samples[1] - samples[0])
+            else:
+                derivative.append(0.0)
+        elif i == len(samples) - 1:
+            # For last sample
+            derivative.append(samples[i] - samples[i-1])
+        else:
+            derivative.append(samples[i+1] - 2*samples[i] + samples[i-1])
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = len(derivative)
+    result_signal.samples = {sorted_indices[i]: [derivative[i]] for i in range(len(derivative))}
+    result_signal.is_periodic = False
+    
+    return result_signal
+
+
+def shift_signal(signal, k):
+    """
+    Shift signal by k steps (positive k = delay, negative k = advance)
+    
+    Args:
+        signal: Signal object
+        k: Number of steps to shift
+    
+    Returns:
+        Signal object with shifted indices
+    """
+    result_signal = Signal()
+    result_signal.N1 = signal.N1
+    result_signal.samples = {}
+    
+    # Shift all indices by k
+    for index, value in signal.samples.items():
+        result_signal.samples[index + k] = value
+    
+    result_signal.is_periodic = signal.is_periodic if hasattr(signal, 'is_periodic') else False
+    
+    return result_signal
+
+
+def fold_signal(signal):
+    """
+    Fold signal (time reversal): x(-n)
+    
+    Args:
+        signal: Signal object
+    
+    Returns:
+        Signal object with folded indices
+    """
+    result_signal = Signal()
+    result_signal.N1 = signal.N1
+    result_signal.samples = {}
+    
+    # Negate all indices
+    for index, value in signal.samples.items():
+        result_signal.samples[-index] = value
+    
+    result_signal.is_periodic = signal.is_periodic if hasattr(signal, 'is_periodic') else False
+    
+    return result_signal
+
+
+def fold_and_shift_signal(signal, k):
+    """
+    Fold then shift signal by k steps
+    
+    Args:
+        signal: Signal object
+        k: Number of steps to shift after folding
+    
+    Returns:
+        Signal object with folded and shifted indices
+    """
+    # First fold
+    folded = fold_signal(signal)
+    # Then shift
+    result = shift_signal(folded, k)
+    
+    return result
+
+
+def remove_dc_time_domain(signal):
+    """
+    Remove DC component in time domain by subtracting mean
+    
+    Args:
+        signal: Signal object
+    
+    Returns:
+        Signal object with DC removed
+    """
+    sorted_indices = sorted(signal.samples.keys())
+    samples = [signal.samples[i][0] for i in sorted_indices]
+    
+    # Calculate mean
+    mean_value = sum(samples) / len(samples)
+    
+    # Subtract mean from all samples
+    result_signal = Signal()
+    result_signal.N1 = signal.N1
+    result_signal.samples = {idx: [signal.samples[idx][0] - mean_value] for idx in sorted_indices}
+    result_signal.is_periodic = signal.is_periodic if hasattr(signal, 'is_periodic') else False
+    
+    return result_signal
+
+
+def convolve_signals(signal1, signal2):
+    """
+    Convolve two signals manually (no numpy.convolve)
+    
+    Args:
+        signal1: First Signal object
+        signal2: Second Signal object
+    
+    Returns:
+        Signal object containing convolution result
+    """
+    # Get sorted indices and samples
+    indices1 = sorted(signal1.samples.keys())
+    samples1 = [signal1.samples[i][0] for i in indices1]
+    
+    indices2 = sorted(signal2.samples.keys())
+    samples2 = [signal2.samples[i][0] for i in indices2]
+    
+    # Convolution output length
+    output_length = len(samples1) + len(samples2) - 1
+    
+    # Initialize output
+    conv_result = [0.0] * output_length
+    
+    # Perform convolution: y[n] = sum(x[k] * h[n-k])
+    for i in range(len(samples1)):
+        for j in range(len(samples2)):
+            conv_result[i + j] += samples1[i] * samples2[j]
+    
+    # Calculate output indices
+    min_index = indices1[0] + indices2[0]
+    output_indices = [min_index + i for i in range(output_length)]
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = output_length
+    result_signal.samples = {output_indices[i]: [conv_result[i]] for i in range(output_length)}
+    result_signal.is_periodic = False
+    
+    return result_signal
+
+
+def cross_correlation(signal1, signal2, normalize=True):
+    """
+    Compute cross-correlation of two signals using circular/periodic correlation
+    
+    Args:
+        signal1: First Signal object
+        signal2: Second Signal object
+        normalize: If True, compute normalized cross-correlation
+    
+    Returns:
+        Signal object containing correlation result
+    """
+    # Get samples
+    indices1 = sorted(signal1.samples.keys())
+    samples1 = np.array([signal1.samples[i][0] for i in indices1])
+    
+    indices2 = sorted(signal2.samples.keys())
+    samples2 = np.array([signal2.samples[i][0] for i in indices2])
+    
+    N = len(samples1)
+    
+    # Compute correlation manually using circular/periodic approach
+    # R(j) = sum(x1[n] * x2[(n+j) mod N]) for all n
+    correlation = []
+    
+    for lag in range(N):
+        sum_val = 0.0
+        for n in range(N):
+            # Use modulo for circular wrapping
+            sum_val += samples1[n] * samples2[(n + lag) % N]
+        correlation.append(sum_val)
+    
+    # Normalize if requested
+    if normalize:
+        # Calculate normalization factor: sqrt(sum(x1^2) * sum(x2^2))
+        sum_sq1 = np.sum(samples1 ** 2)
+        sum_sq2 = np.sum(samples2 ** 2)
+        norm_factor = np.sqrt(sum_sq1 * sum_sq2)
+        
+        if norm_factor > 0:
+            correlation = [c / norm_factor for c in correlation]
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = len(correlation)
+    result_signal.samples = {i: [correlation[i]] for i in range(len(correlation))}
+    result_signal.is_periodic = False
+    
+    return result_signal
+
+
+def auto_correlation(signal, normalize=True):
+    """
+    Compute auto-correlation of a signal
+    
+    Args:
+        signal: Signal object
+        normalize: If True, compute normalized auto-correlation
+    
+    Returns:
+        Signal object containing auto-correlation result
+    """
+    return cross_correlation(signal, signal, normalize)
+
+
+def periodic_cross_correlation(signal1, signal2, normalize=True):
+    """
+    Compute normalized cross-correlation of periodic signals (can be different lengths)
+    
+    Args:
+        signal1: First Signal object (periodic)
+        signal2: Second Signal object (periodic)
+        normalize: If True, compute normalized correlation
+    
+    Returns:
+        Signal object containing correlation result
+    """
+    # Get samples
+    indices1 = sorted(signal1.samples.keys())
+    samples1 = np.array([signal1.samples[i][0] for i in indices1])
+    
+    indices2 = sorted(signal2.samples.keys())
+    samples2 = np.array([signal2.samples[i][0] for i in indices2])
+    
+    N1 = len(samples1)
+    N2 = len(samples2)
+    N = max(N1, N2)
+    
+    # For periodic signals, compute correlation over one period
+    correlation = []
+    
+    for lag in range(N):
+        sum_val = 0.0
+        for n in range(N):
+            idx1 = n % N1
+            idx2 = (n + lag) % N2
+            sum_val += samples1[idx1] * samples2[idx2]
+        correlation.append(sum_val / N)
+    
+    # Normalize if requested
+    if normalize:
+        sum_sq1 = np.sum(samples1 ** 2) / N1
+        sum_sq2 = np.sum(samples2 ** 2) / N2
+        norm_factor = np.sqrt(sum_sq1 * sum_sq2)
+        
+        if norm_factor > 0:
+            correlation = [c / norm_factor for c in correlation]
+    
+    # Create result signal
+    result_signal = Signal()
+    result_signal.N1 = len(correlation)
+    result_signal.samples = {i: [correlation[i]] for i in range(len(correlation))}
+    result_signal.is_periodic = True
+    
+    return result_signal
+
+
+def time_delay_analysis(signal1, signal2, sampling_period):
+    """
+    Perform time delay analysis between two periodic signals
+    Find the delay between them using cross-correlation
+    
+    Args:
+        signal1: First Signal object (periodic)
+        signal2: Second Signal object (periodic)
+        sampling_period: Sampling period (Ts) in seconds
+    
+    Returns:
+        tuple: (delay_samples, delay_time)
+            delay_samples: delay in number of samples
+            delay_time: delay in seconds
+    """
+    # Compute cross-correlation
+    corr_signal = periodic_cross_correlation(signal1, signal2, normalize=True)
+    
+    # Find the index of maximum correlation
+    indices = sorted(corr_signal.samples.keys())
+    correlations = [corr_signal.samples[i][0] for i in indices]
+    
+    max_corr_idx = correlations.index(max(correlations))
+    delay_samples = indices[max_corr_idx]
+    
+    # Convert to time
+    delay_time = delay_samples * sampling_period
+    
+    return delay_samples, delay_time

@@ -3,7 +3,9 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import os
 from signal_processor import Signal, write_signal_file, add_signals, subtract_signals, multiply_signal, square_signal, \
     accumulate_signal, normalize_signal, generate_sin_cos, load_signal_file, quantize_signal_bits, quantize_signal_levels, \
-    dft, idft, remove_dc_component, fft_ifft
+    dft, idft, remove_dc_component, fft_ifft, moving_average, first_derivative, second_derivative, shift_signal, \
+    fold_signal, fold_and_shift_signal, remove_dc_time_domain, convolve_signals, cross_correlation, auto_correlation, \
+    periodic_cross_correlation, time_delay_analysis
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -219,6 +221,47 @@ class SignalProcessorGUI(tk.Tk):
                 text=text,
                 command=cmd,
                 bg='#8e44ad',
+                fg='white',
+                font=('Arial', 9),
+                cursor='hand2',
+                relief=tk.FLAT,
+                padx=10,
+                pady=5
+            )
+            btn.pack(fill=tk.X, padx=10, pady=3)
+        
+        # Time Domain Section
+        time_section = tk.LabelFrame(
+            parent,
+            text=" Time Domain ",
+            font=('Arial', 10, 'bold'),
+            bg='#34495e',
+            fg='#ecf0f1',
+            bd=2
+        )
+        time_section.pack(fill=tk.X, padx=10, pady=10)
+
+        time_operations = [
+            ("📉 Smoothing (Moving Avg)", self.perform_smoothing),
+            ("📈 1st Derivative", self.perform_first_derivative),
+            ("📈 2nd Derivative", self.perform_second_derivative),
+            ("⏩ Shift Signal", self.perform_shift),
+            ("🔄 Fold Signal", self.perform_fold),
+            ("🔄⏩ Fold & Shift", self.perform_fold_and_shift),
+            ("🚫 Remove DC (Time)", self.perform_remove_dc_time),
+            ("✖️ Convolve Signals", self.perform_convolution),
+            ("📊 Cross-Correlation", self.perform_cross_correlation),
+            ("📊 Auto-Correlation", self.perform_auto_correlation),
+            ("🔁 Periodic Correlation", self.perform_periodic_correlation),
+            ("⏱️ Time Delay Analysis", self.perform_time_delay_analysis)
+        ]
+
+        for text, cmd in time_operations:
+            btn = tk.Button(
+                time_section,
+                text=text,
+                command=cmd,
+                bg='#c0392b',
                 fg='white',
                 font=('Arial', 9),
                 cursor='hand2',
@@ -1857,6 +1900,324 @@ class SignalProcessorGUI(tk.Tk):
         
         # Display reconstructed signal
         self.show_signal_visualization(time_signal, f"IFFT: {time_name}")
+    
+    # === TIME DOMAIN OPERATIONS ===
+    def perform_smoothing(self):
+        """Apply moving average smoothing"""
+        name, sig = self.select_signal("Select signal to smooth:")
+        if not sig:
+            return
+        
+        # Ask for window size
+        window_size = simpledialog.askinteger(
+            "Moving Average",
+            "Enter number of points to average:",
+            minvalue=1,
+            maxvalue=sig.N1
+        )
+        if not window_size:
+            return
+        
+        self.write_to_console(f"Applying moving average with window size {window_size}...")
+        
+        # Apply smoothing
+        smoothed_signal = moving_average(sig, window_size)
+        
+        # Register result
+        result_name = f"{name}_smoothed_{window_size}"
+        self.register_signal(result_name, smoothed_signal)
+        
+        # Ask to save
+        self.ask_for_save(smoothed_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(smoothed_signal, f"Smoothed: {name}")
+    
+    def perform_first_derivative(self):
+        """Compute first derivative"""
+        name, sig = self.select_signal("Select signal for 1st derivative:")
+        if not sig:
+            return
+        
+        self.write_to_console(f"Computing first derivative of '{name}'...")
+        
+        # Compute derivative
+        deriv_signal = first_derivative(sig)
+        
+        # Register result
+        result_name = f"{name}_1st_deriv"
+        self.register_signal(result_name, deriv_signal)
+        
+        # Ask to save
+        self.ask_for_save(deriv_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(deriv_signal, f"1st Derivative: {name}")
+    
+    def perform_second_derivative(self):
+        """Compute second derivative"""
+        name, sig = self.select_signal("Select signal for 2nd derivative:")
+        if not sig:
+            return
+        
+        self.write_to_console(f"Computing second derivative of '{name}'...")
+        
+        # Compute derivative
+        deriv_signal = second_derivative(sig)
+        
+        # Register result
+        result_name = f"{name}_2nd_deriv"
+        self.register_signal(result_name, deriv_signal)
+        
+        # Ask to save
+        self.ask_for_save(deriv_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(deriv_signal, f"2nd Derivative: {name}")
+    
+    def perform_shift(self):
+        """Shift signal by k steps"""
+        name, sig = self.select_signal("Select signal to shift:")
+        if not sig:
+            return
+        
+        # Ask for shift amount
+        k = simpledialog.askinteger(
+            "Shift Signal",
+            "Enter shift amount (positive=delay, negative=advance):",
+            initialvalue=0
+        )
+        if k is None:
+            return
+        
+        self.write_to_console(f"Shifting '{name}' by {k} steps...")
+        
+        # Shift signal
+        shifted_signal = shift_signal(sig, k)
+        
+        # Register result
+        result_name = f"{name}_shifted_{k}"
+        self.register_signal(result_name, shifted_signal)
+        
+        # Ask to save
+        self.ask_for_save(shifted_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(shifted_signal, f"Shifted: {name} (k={k})")
+    
+    def perform_fold(self):
+        """Fold signal (time reversal)"""
+        name, sig = self.select_signal("Select signal to fold:")
+        if not sig:
+            return
+        
+        self.write_to_console(f"Folding '{name}'...")
+        
+        # Fold signal
+        folded_signal = fold_signal(sig)
+        
+        # Register result
+        result_name = f"{name}_folded"
+        self.register_signal(result_name, folded_signal)
+        
+        # Ask to save
+        self.ask_for_save(folded_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(folded_signal, f"Folded: {name}")
+    
+    def perform_fold_and_shift(self):
+        """Fold then shift signal"""
+        name, sig = self.select_signal("Select signal to fold and shift:")
+        if not sig:
+            return
+        
+        # Ask for shift amount
+        k = simpledialog.askinteger(
+            "Fold & Shift Signal",
+            "Enter shift amount after folding:",
+            initialvalue=0
+        )
+        if k is None:
+            return
+        
+        self.write_to_console(f"Folding and shifting '{name}' by {k} steps...")
+        
+        # Fold and shift
+        result_signal = fold_and_shift_signal(sig, k)
+        
+        # Register result
+        result_name = f"{name}_fold_shift_{k}"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"Folded & Shifted: {name} (k={k})")
+    
+    def perform_remove_dc_time(self):
+        """Remove DC component in time domain"""
+        name, sig = self.select_signal("Select signal to remove DC (time domain):")
+        if not sig:
+            return
+        
+        self.write_to_console(f"Removing DC component from '{name}' in time domain...")
+        
+        # Remove DC
+        result_signal = remove_dc_time_domain(sig)
+        
+        # Register result
+        result_name = f"{name}_no_dc_time"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"DC Removed (Time): {name}")
+    
+    def perform_convolution(self):
+        """Convolve two signals"""
+        name1, sig1 = self.select_signal("Select first signal for convolution:")
+        if not sig1:
+            return
+        
+        name2, sig2 = self.select_signal("Select second signal for convolution:")
+        if not sig2:
+            return
+        
+        self.write_to_console(f"Convolving '{name1}' and '{name2}'...")
+        
+        # Convolve
+        result_signal = convolve_signals(sig1, sig2)
+        
+        # Register result
+        result_name = f"{name1}_conv_{name2}"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"Convolution: {name1} * {name2}")
+    
+    def perform_cross_correlation(self):
+        """Compute cross-correlation"""
+        name1, sig1 = self.select_signal("Select first signal:")
+        if not sig1:
+            return
+        
+        name2, sig2 = self.select_signal("Select second signal:")
+        if not sig2:
+            return
+        
+        self.write_to_console(f"Computing cross-correlation of '{name1}' and '{name2}'...")
+        
+        # Compute correlation
+        result_signal = cross_correlation(sig1, sig2, normalize=True)
+        
+        # Register result
+        result_name = f"{name1}_xcorr_{name2}"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"Cross-Correlation: {name1} × {name2}")
+    
+    def perform_auto_correlation(self):
+        """Compute auto-correlation"""
+        name, sig = self.select_signal("Select signal for auto-correlation:")
+        if not sig:
+            return
+        
+        self.write_to_console(f"Computing auto-correlation of '{name}'...")
+        
+        # Compute correlation
+        result_signal = auto_correlation(sig, normalize=True)
+        
+        # Register result
+        result_name = f"{name}_autocorr"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"Auto-Correlation: {name}")
+    
+    def perform_periodic_correlation(self):
+        """Compute periodic cross-correlation"""
+        name1, sig1 = self.select_signal("Select first periodic signal:")
+        if not sig1:
+            return
+        
+        name2, sig2 = self.select_signal("Select second periodic signal:")
+        if not sig2:
+            return
+        
+        self.write_to_console(f"Computing periodic correlation of '{name1}' and '{name2}'...")
+        
+        # Compute correlation
+        result_signal = periodic_cross_correlation(sig1, sig2, normalize=True)
+        
+        # Register result
+        result_name = f"{name1}_periodic_corr_{name2}"
+        self.register_signal(result_name, result_signal)
+        
+        # Ask to save
+        self.ask_for_save(result_signal, result_name)
+        
+        # Display
+        self.show_signal_visualization(result_signal, f"Periodic Correlation: {name1} × {name2}")
+    
+    def perform_time_delay_analysis(self):
+        """Analyze time delay between two signals"""
+        name1, sig1 = self.select_signal("Select first periodic signal:")
+        if not sig1:
+            return
+        
+        name2, sig2 = self.select_signal("Select second periodic signal:")
+        if not sig2:
+            return
+        
+        # Ask for sampling period
+        sampling_period = simpledialog.askfloat(
+            "Time Delay Analysis",
+            "Enter sampling period (Ts) in seconds:",
+            minvalue=0.0001
+        )
+        if not sampling_period:
+            return
+        
+        self.write_to_console(f"Analyzing time delay between '{name1}' and '{name2}'...")
+        
+        # Compute delay
+        delay_samples, delay_time = time_delay_analysis(sig1, sig2, sampling_period)
+        
+        # Display results
+        result_text = f"\n{'='*50}\n"
+        result_text += f"Time Delay Analysis Results:\n"
+        result_text += f"{'='*50}\n"
+        result_text += f"Signal 1: {name1}\n"
+        result_text += f"Signal 2: {name2}\n"
+        result_text += f"Sampling Period (Ts): {sampling_period} seconds\n"
+        result_text += f"Delay in samples: {delay_samples}\n"
+        result_text += f"Delay in time: {delay_time} seconds\n"
+        result_text += f"{'='*50}\n"
+        
+        self.write_to_console(result_text)
+        
+        # Show in message box too
+        messagebox.showinfo(
+            "Time Delay Analysis",
+            f"Delay between signals:\n\n"
+            f"Samples: {delay_samples}\n"
+            f"Time: {delay_time} seconds\n"
+            f"(Ts = {sampling_period} s)"
+        )
 
 
 
